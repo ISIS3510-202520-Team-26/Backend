@@ -295,3 +295,4 @@ If you changed `JWT_SECRET`, log in again to issue a new token.
 * **Port conflicts** – adjust `API_PORT` or service ports in `docker-compose`.
 
 ---
+
