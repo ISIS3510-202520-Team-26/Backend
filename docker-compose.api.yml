@@ -1,0 +1,36 @@
+services:
+  api:
+    build: .
+    container_name: market_api
+    env_file: .env
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+
+  worker:
+    build: .
+    image: backend-api
+    container_name: market_worker
+    command: celery -A app.workers.celery_app.celery_app worker -l info -Q thumbnails,analytics,maintenance --concurrency=2
+    env_file: .env
+    depends_on:
+      - db
+      - redis
+      - minio
+
+  beat:
+    build: .
+    image: backend-api
+    container_name: market_beat
+    command: celery -A app.workers.celery_app.celery_app beat -l info
+    env_file: .env
+    depends_on:
+      - worker
+      - db
+      - redis
+      - minio
+
