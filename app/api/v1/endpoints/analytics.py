@@ -1,60 +1,131 @@
 from __future__ import annotations
-from datetime import datetime, timezone
-from typing import List
-from fastapi import APIRouter, Depends, Query
+from datetime import datetime
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
+from app.api.deps import get_db
+from app.services.analytics import AnalyticsService
 
-from app.api.deps import get_db, get_current_user
-from app.repositories.events_repo import EventRepository
+router = APIRouter(prefix="/analytics", tags=["analytics"])
 
-router = APIRouter(prefix="/analytics/bq", tags=["analytics"])
+def _parse_iso(s: str) -> datetime:
+    try:
+        return datetime.fromisoformat(s.replace("Z", "+00:00"))
+    except Exception:
+        raise HTTPException(status_code=400, detail=f"Invalid ISO datetime: {s}")
 
-def _to_utc(dt: datetime) -> datetime:
-    if dt.tzinfo is None:
-        return dt.replace(tzinfo=timezone.utc)
-    return dt.astimezone(timezone.utc)
+def _range(start: str | None, end: str | None) -> tuple[datetime, datetime]:
+    if not start or not end:
+        raise HTTPException(status_code=400, detail="Query params 'start' and 'end' are required (ISO).")
+    return _parse_iso(start), _parse_iso(end)
 
+# ---------- 1.x (ya estaban) ----------
 class BQ11Row(BaseModel):
     day: str
     category_id: str | None
     count: int
 
-@router.get("/1_1", response_model=List[BQ11Row])
+@router.get("/bq/1_1", response_model=list[BQ11Row])
 async def bq_1_1(
-    start: datetime = Query(..., description="ISO-8601 e.g. 2025-10-02T00:00:00Z"),
-    end: datetime   = Query(..., description="ISO-8601 e.g. 2025-10-09T23:59:59Z"),
+    start: str = Query(...), end: str = Query(...),
     db: AsyncSession = Depends(get_db),
-    current=Depends(get_current_user),
 ):
-    repo = EventRepository(db)
-    rows = await repo.bq_1_1_listings_per_day_by_category(start=_to_utc(start), end=_to_utc(end))
-    return [
-        BQ11Row(day=str(r["day"]), category_id=r["category_id"], count=int(r["n"]))
-        for r in rows
-    ]
+    s_dt, e_dt = _range(start, end)
+    svc = AnalyticsService(db)
+    rows = await svc.bq_1_1_listings_per_day_by_category(start=s_dt, end=e_dt)
+    return [BQ11Row(day=str(r[0]), category_id=r[1], count=int(r[2])) for r in rows]
 
 class BQ12Row(BaseModel):
-    step: str | None
+    step: str
     total: int
     cancelled: int
     pct_cancelled: float
 
-@router.get("/1_2", response_model=List[BQ12Row])
+@router.get("/bq/1_2", response_model=list[BQ12Row])
 async def bq_1_2(
-    start: datetime = Query(..., description="ISO-8601 e.g. 2025-10-02T00:00:00Z"),
-    end: datetime   = Query(..., description="ISO-8601 e.g. 2025-10-09T23:59:59Z"),
+    start: str = Query(...), end: str = Query(...),
     db: AsyncSession = Depends(get_db),
-    current=Depends(get_current_user),
 ):
-    repo = EventRepository(db)
-    rows = await repo.bq_1_2_escrow_cancel_rate(start=_to_utc(start), end=_to_utc(end))
-    return [
-        BQ12Row(
-            step=r["step"],
-            total=int(r["total"]),
-            cancelled=int(r["cancelled"]),
-            pct_cancelled=float(r["pct_cancelled"]),
-        )
-        for r in rows
-    ]
+    s_dt, e_dt = _range(start, end)
+    svc = AnalyticsService(db)
+    rows = await svc.bq_1_2_escrow_cancel_rate(start=s_dt, end=e_dt)
+    return [BQ12Row(step=r[0], total=int(r[1]), cancelled=int(r[2]), pct_cancelled=float(r[3])) for r in rows]
+
+# ---------- 2.x ----------
+class BQ21Row(BaseModel):
+    day: str
+    event_type: str | None
+    count: int
+
+@router.get("/bq/2_1", response_model=list[BQ21Row])
+async def bq_2_1(start: str = Query(...), end: str = Query(...), db: AsyncSession = Depends(get_db)):
+    s_dt, e_dt = _range(start, end)
+    rows = await AnalyticsService(db).bq_2_1_events_per_type_by_day(start=s_dt, end=e_dt)
+    return [BQ21Row(day=str(r[0]), event_type=r[1], count=int(r[2])) for r in rows]
+
+class BQ22Row(BaseModel):
+    day: str
+    button: str | None
+    count: int
+
+@router.get("/bq/2_2", response_model=list[BQ22Row])
+async def bq_2_2(start: str = Query(...), end: str = Query(...), db: AsyncSession = Depends(get_db)):
+    s_dt, e_dt = _range(start, end)
+    rows = await AnalyticsService(db).bq_2_2_clicks_by_button_by_day(start=s_dt, end=e_dt)
+    return [BQ22Row(day=str(r[0]), button=r[1], count=int(r[2])) for r in rows]
+
+# ---------- 3.x ----------
+class BQ31Row(BaseModel):
+    day: str
+    dau: int
+
+@router.get("/bq/3_1", response_model=list[BQ31Row])
+async def bq_3_1(start: str = Query(...), end: str = Query(...), db: AsyncSession = Depends(get_db)):
+    s_dt, e_dt = _range(start, end)
+    rows = await AnalyticsService(db).bq_3_1_dau(start=s_dt, end=e_dt)
+    return [BQ31Row(day=str(r[0]), dau=int(r[1])) for r in rows]
+
+class BQ32Row(BaseModel):
+    day: str
+    sessions: int
+
+@router.get("/bq/3_2", response_model=list[BQ32Row])
+async def bq_3_2(start: str = Query(...), end: str = Query(...), db: AsyncSession = Depends(get_db)):
+    s_dt, e_dt = _range(start, end)
+    rows = await AnalyticsService(db).bq_3_2_sessions_by_day(start=s_dt, end=e_dt)
+    return [BQ32Row(day=str(r[0]), sessions=int(r[1])) for r in rows]
+
+# ---------- 4.x ----------
+class BQ41Row(BaseModel):
+    day: str
+    status: str
+    count: int
+
+@router.get("/bq/4_1", response_model=list[BQ41Row])
+async def bq_4_1(start: str = Query(...), end: str = Query(...), db: AsyncSession = Depends(get_db)):
+    s_dt, e_dt = _range(start, end)
+    rows = await AnalyticsService(db).bq_4_1_orders_by_status_by_day(start=s_dt, end=e_dt)
+    return [BQ41Row(day=str(r[0]), status=r[1], count=int(r[2])) for r in rows]
+
+class BQ42Row(BaseModel):
+    day: str
+    gmv_cents: int
+    orders_paid: int
+
+@router.get("/bq/4_2", response_model=list[BQ42Row])
+async def bq_4_2(start: str = Query(...), end: str = Query(...), db: AsyncSession = Depends(get_db)):
+    s_dt, e_dt = _range(start, end)
+    rows = await AnalyticsService(db).bq_4_2_gmv_by_day(start=s_dt, end=e_dt)
+    return [BQ42Row(day=str(r[0]), gmv_cents=int(r[1]), orders_paid=int(r[2])) for r in rows]
+
+# ---------- 5.x ----------
+class BQ51Row(BaseModel):
+    day: str
+    category_id: str | None
+    count: int
+
+@router.get("/bq/5_1", response_model=list[BQ51Row])
+async def bq_5_1(start: str = Query(...), end: str = Query(...), db: AsyncSession = Depends(get_db)):
+    s_dt, e_dt = _range(start, end)
+    rows = await AnalyticsService(db).bq_5_1_quick_view_by_category_by_day(start=s_dt, end=e_dt)
+    return [BQ51Row(day=str(r[0]), category_id=r[1], count=int(r[2])) for r in rows]
