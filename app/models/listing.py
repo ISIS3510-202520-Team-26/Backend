@@ -13,7 +13,7 @@ class Listing(Base):
     description: Mapped[str | None] = mapped_column(sa.Text)
     category_id: Mapped[str] = mapped_column(UUID(as_uuid=False), sa.ForeignKey("category.id"), nullable=False)
     brand_id: Mapped[str | None] = mapped_column(UUID(as_uuid=False), sa.ForeignKey("brand.id"))
-    price_cents: Mapped[int] = mapped_column(sa.Integer, nullable=False)
+    price_cents: Mapped[int] = mapped_column(sa.BigInteger, nullable=False)
     currency: Mapped[str] = mapped_column(sa.String(3), nullable=False, default="COP")
     condition: Mapped[str | None] = mapped_column(sa.String(40))
     quantity: Mapped[int] = mapped_column(sa.Integer, nullable=False, default=1)

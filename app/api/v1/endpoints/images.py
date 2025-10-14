@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_current_user
 from app.db.session import get_db
 from app.schemas.photo import PresignIn, PresignOut, ConfirmIn, ConfirmOut
-from app.services.image_service import make_object_key, presign_put, confirm_and_record
+from app.services.image_service import make_object_key, presign_put, confirm_and_record, presign_get
 
 # ⬇️ Celery task (worker)
 from app.workers.jobs.thumbnails import generate_thumbnail_task
@@ -53,3 +53,13 @@ async def confirm_image(
         return ConfirmOut(preview_url=preview)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error confirm: {e}")
+
+
+
+@router.get("/preview", response_model=ConfirmOut)
+async def preview_image(object_key: str, current=Depends(get_current_user)):
+    try:
+        url = presign_get(object_key)
+        return ConfirmOut(preview_url=url)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error preview: {e}")
