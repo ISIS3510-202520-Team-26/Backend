@@ -1,3 +1,4 @@
+# app/core/config.py (o donde tengas tu Settings)
 from __future__ import annotations
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import Field
@@ -11,11 +12,12 @@ class Settings(BaseSettings):
     )
 
     # --- DB/Redis ---
-    database_url: str = Field(..., alias="DATABASE_URL")     
+    database_url: str = Field(..., alias="DATABASE_URL")
     redis_url: str = Field("redis://localhost:6379/0", alias="REDIS_URL")
 
     # --- S3/MinIO ---
-    s3_endpoint: str  = Field("http://localhost:9000", alias="S3_ENDPOINT")
+    s3_endpoint: str  = Field("http://localhost:9000", alias="S3_ENDPOINT")     # interno (docker)
+    s3_public_endpoint: str | None = Field(None, alias="S3_PUBLIC_ENDPOINT")     # público (clientes)
     s3_region: str    = Field("us-east-1", alias="S3_REGION")
     s3_bucket: str    = Field("market-images", alias="S3_BUCKET")
     s3_access_key: str = Field(..., alias="S3_ACCESS_KEY")
@@ -29,5 +31,10 @@ class Settings(BaseSettings):
 
     # --- App ---
     app_env: str = Field("dev", alias="APP_ENV")
+
+    # helper: si no hay público, usa el interno
+    @property
+    def s3_presign_endpoint(self) -> str:
+        return self.s3_public_endpoint or self.s3_endpoint
 
 settings = Settings()
