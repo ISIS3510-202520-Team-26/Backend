@@ -1,18 +1,15 @@
 from __future__ import annotations
-import json
 from datetime import datetime, timezone
 from typing import Any, Iterable, Mapping
-from sqlalchemy.dialects.postgresql import JSONB
-
 import sqlalchemy as sa
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncSession
-
 
 class EventRepository:
     def __init__(self, session: AsyncSession):
         self.session = session
 
-    # --------- Inserción robusta (evita binds faltantes) ----------
+    # --------- Inserción robusta ----------
     async def insert_batch(self, events: Iterable[Mapping[str, Any]]) -> list[str]:
         sql = sa.text("""
             INSERT INTO event (
@@ -25,7 +22,7 @@ class EventRepository:
             )
             RETURNING id
         """).bindparams(
-            sa.bindparam("properties", type_=JSONB)  # <-- aquí el tipo; sin ::jsonb en la SQL
+            sa.bindparam("properties", type_=JSONB)
         )
 
         def _coerce_dt(v: Any) -> datetime:
@@ -45,14 +42,14 @@ class EventRepository:
                 "order_id": e.get("order_id"),
                 "chat_id": e.get("chat_id"),
                 "step": e.get("step"),
-                "properties": e.get("properties", {}),     # <-- dict, no json.dumps
+                "properties": e.get("properties", {}),
                 "occurred_at": _coerce_dt(e.get("occurred_at")),
             }
             res = await self.session.execute(sql, ev)
             ids.append(res.scalar_one())
         return ids
 
-    # ----------------------- BQ 1.x (ya existentes) -----------------------
+    # ----------------------- BQ 1.x -----------------------
     async def bq_1_1_listings_per_day_by_category(self, *, start: datetime, end: datetime):
         stmt = sa.text("""
             SELECT occurred_at::date AS day, properties->>'category_id' AS category_id, COUNT(*) AS n
@@ -111,6 +108,53 @@ class EventRepository:
         res = await self.session.execute(stmt, {"start": start, "end": end})
         return res.all()
 
+    async def bq_2_4_time_by_screen(self, *, start: datetime, end: datetime, max_idle_sec: int = 300):
+        """
+        Calcula dwell time por pantalla usando eventos `screen.view`.
+        - Usa LEAD() por session_id para tomar la siguiente vista como fin del intervalo.
+        - Si no hay siguiente vista, capea a `max_idle_sec` (por defecto 5 min).
+        Devuelve: [(screen, total_seconds, views, avg_seconds)]
+        """
+        stmt = sa.text("""
+            WITH v AS (
+              SELECT
+                session_id,
+                occurred_at,
+                COALESCE(NULLIF(properties->>'screen',''), '(unknown)') AS screen
+              FROM event
+              WHERE event_type = 'screen.view'
+                AND occurred_at >= :start AND occurred_at < :end
+            ),
+            o AS (
+              SELECT
+                session_id,
+                screen,
+                occurred_at,
+                LEAD(occurred_at) OVER (PARTITION BY session_id ORDER BY occurred_at) AS next_time
+              FROM v
+            ),
+            d AS (
+              SELECT
+                screen,
+                LEAST(:max_idle, GREATEST(0, COALESCE(EXTRACT(EPOCH FROM (next_time - occurred_at)), :max_idle)))::bigint AS seconds
+              FROM o
+            )
+            SELECT
+              screen,
+              SUM(seconds)::bigint AS total_seconds,
+              COUNT(*)::bigint AS views,
+              ROUND(AVG(seconds))::bigint AS avg_seconds
+            FROM d
+            GROUP BY screen
+            ORDER BY total_seconds DESC
+        """)
+        res = await self.session.execute(stmt, {
+            "start": start,
+            "end": end,
+            "max_idle": max_idle_sec,
+        })
+        return res.all()
+
     # ----------------------- BQ 3.x -----------------------
     async def bq_3_1_dau(self, *, start: datetime, end: datetime):
         stmt = sa.text("""
@@ -138,7 +182,6 @@ class EventRepository:
 
     # ----------------------- BQ 4.x -----------------------
     async def bq_4_1_orders_by_status_by_day(self, *, start: datetime, end: datetime):
-        # Nota: "order" es palabra reservada → comillas
         stmt = sa.text("""
             SELECT created_at::date AS day, status, COUNT(*) AS n
             FROM "order"
@@ -166,8 +209,8 @@ class EventRepository:
     async def bq_5_1_quick_view_by_category_by_day(self, *, start: datetime, end: datetime):
         stmt = sa.text("""
             SELECT e.occurred_at::date AS day,
-                  l.category_id::text AS category_id,   -- << aquí el cast a texto
-                  COUNT(*) AS n
+                   l.category_id::text AS category_id,
+                   COUNT(*) AS n
             FROM event e
             JOIN listing l ON l.id = e.listing_id
             WHERE e.event_type = 'feature.used'

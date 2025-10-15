@@ -19,20 +19,16 @@ def _range(start: str | None, end: str | None) -> tuple[datetime, datetime]:
         raise HTTPException(status_code=400, detail="Query params 'start' and 'end' are required (ISO).")
     return _parse_iso(start), _parse_iso(end)
 
-# ---------- 1.x (ya estaban) ----------
+# ---------- 1.x ----------
 class BQ11Row(BaseModel):
     day: str
     category_id: str | None
     count: int
 
 @router.get("/bq/1_1", response_model=list[BQ11Row])
-async def bq_1_1(
-    start: str = Query(...), end: str = Query(...),
-    db: AsyncSession = Depends(get_db),
-):
+async def bq_1_1(start: str = Query(...), end: str = Query(...), db: AsyncSession = Depends(get_db)):
     s_dt, e_dt = _range(start, end)
-    svc = AnalyticsService(db)
-    rows = await svc.bq_1_1_listings_per_day_by_category(start=s_dt, end=e_dt)
+    rows = await AnalyticsService(db).bq_1_1_listings_per_day_by_category(start=s_dt, end=e_dt)
     return [BQ11Row(day=str(r[0]), category_id=r[1], count=int(r[2])) for r in rows]
 
 class BQ12Row(BaseModel):
@@ -42,13 +38,9 @@ class BQ12Row(BaseModel):
     pct_cancelled: float
 
 @router.get("/bq/1_2", response_model=list[BQ12Row])
-async def bq_1_2(
-    start: str = Query(...), end: str = Query(...),
-    db: AsyncSession = Depends(get_db),
-):
+async def bq_1_2(start: str = Query(...), end: str = Query(...), db: AsyncSession = Depends(get_db)):
     s_dt, e_dt = _range(start, end)
-    svc = AnalyticsService(db)
-    rows = await svc.bq_1_2_escrow_cancel_rate(start=s_dt, end=e_dt)
+    rows = await AnalyticsService(db).bq_1_2_escrow_cancel_rate(start=s_dt, end=e_dt)
     return [BQ12Row(step=r[0], total=int(r[1]), cancelled=int(r[2]), pct_cancelled=float(r[3])) for r in rows]
 
 # ---------- 2.x ----------
@@ -73,6 +65,26 @@ async def bq_2_2(start: str = Query(...), end: str = Query(...), db: AsyncSessio
     s_dt, e_dt = _range(start, end)
     rows = await AnalyticsService(db).bq_2_2_clicks_by_button_by_day(start=s_dt, end=e_dt)
     return [BQ22Row(day=str(r[0]), button=r[1], count=int(r[2])) for r in rows]
+
+class BQ24Row(BaseModel):
+    screen: str | None
+    total_seconds: int
+    views: int
+    avg_seconds: int
+
+@router.get("/bq/2_4", response_model=list[BQ24Row])
+async def bq_2_4(
+    start: str = Query(..., description="ISO 8601 e.g. 2025-10-14T00:00:00Z"),
+    end:   str = Query(..., description="ISO 8601 e.g. 2025-10-15T00:00:00Z"),
+    max_idle_sec: int = Query(300, ge=30, le=3600, description="Cap para intervalos sin siguiente pantalla"),
+    db: AsyncSession = Depends(get_db),
+):
+    s_dt, e_dt = _range(start, end)
+    rows = await AnalyticsService(db).bq_2_4_time_by_screen(start=s_dt, end=e_dt, max_idle_sec=max_idle_sec)
+    return [
+        BQ24Row(screen=r[0], total_seconds=int(r[1]), views=int(r[2]), avg_seconds=int(r[3]))
+        for r in rows
+    ]
 
 # ---------- 3.x ----------
 class BQ31Row(BaseModel):

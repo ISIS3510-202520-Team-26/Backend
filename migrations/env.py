@@ -6,7 +6,6 @@ from alembic import context
 from sqlalchemy import create_engine
 
 from app.db.base import Base
-# importa modelos para autogenerate
 from app.models.brand import Brand
 from app.models.category import Category
 from app.models.chat import Chat, ChatParticipant
