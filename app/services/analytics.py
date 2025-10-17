@@ -3,7 +3,6 @@ from datetime import datetime
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.repositories.events_repo import EventRepository
 
-
 class AnalyticsService:
     def __init__(self, db: AsyncSession):
         self.events = EventRepository(db)
@@ -21,6 +20,9 @@ class AnalyticsService:
 
     async def bq_2_2_clicks_by_button_by_day(self, *, start: datetime, end: datetime):
         return await self.events.bq_2_2_clicks_by_button_by_day(start=start, end=end)
+
+    async def bq_2_4_time_by_screen(self, *, start: datetime, end: datetime, max_idle_sec: int = 300):
+        return await self.events.bq_2_4_time_by_screen(start=start, end=end, max_idle_sec=max_idle_sec)
 
     # 3.x
     async def bq_3_1_dau(self, *, start: datetime, end: datetime):
