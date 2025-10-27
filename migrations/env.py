@@ -23,6 +23,7 @@ from app.models.payment import Payment
 from app.models.price_suggestion import PriceSuggestion
 from app.models.review import Review
 from app.models.user import User
+from alembic import context
 
 config = context.config
 if config.config_file_name is not None:
@@ -36,6 +37,21 @@ sync_url = raw_url.replace("+asyncpg", "")  # p.ej. postgresql://...
 config.set_main_option("sqlalchemy.url", sync_url)
 
 target_metadata = Base.metadata
+
+EXCLUDED_SCHEMAS = {"tiger", "tiger_data", "topology"}
+EXCLUDED_TABLES = {
+    "spatial_ref_sys", "geometry_columns", "geography_columns",
+    "raster_columns", "raster_overviews"
+}
+
+def include_object(object, name, type_, reflected, compare_to):
+    schema = getattr(object, "schema", None)
+    if type_ == "table":
+        if schema in EXCLUDED_SCHEMAS:
+            return False
+        if name in EXCLUDED_TABLES:
+            return False
+    return True
 
 def run_migrations_offline() -> None:
     context.configure(
@@ -57,10 +73,10 @@ def run_migrations_online() -> None:
         context.configure(
             connection=connection,
             target_metadata=target_metadata,
-            compare_type=True,
-            compare_server_default=True,
             include_schemas=True,
-            version_table_schema=None,
+            include_object=include_object,
+            compare_type=True,
+            version_table_schema="public", 
         )
         with context.begin_transaction():
             context.run_migrations()

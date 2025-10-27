@@ -1,36 +1,60 @@
 services:
   api:
     build: .
+    image: backend-api
     container_name: market_api
+    env_file: .env
+    working_dir: /app
+    volumes:
+      - .:/app            # <— DEV: persistir migraciones/ código en host
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+    # command: uvicorn app.main:app --host 0.0.0.0 --port 8000  # (si no lo defines en Dockerfile)
+
+  worker:
+    build: .
+    image: backend-api
+    container_name: market_worker
+    working_dir: /app
+    volumes:
+      - .:/app            # <— opcional en DEV (útil si tocas código de tasks)
+    command: >
+      celery -A app.workers.celery_app.celery_app worker
+      -l info -Q thumbnails,analytics,maintenance --concurrency=2
     env_file: .env
     depends_on:
       db:
         condition: service_healthy
       redis:
         condition: service_healthy
-    ports:
-      - "8000:8000"
-
-  worker:
-    build: .
-    image: backend-api
-    container_name: market_worker
-    command: celery -A app.workers.celery_app.celery_app worker -l info -Q thumbnails,analytics,maintenance --concurrency=2
-    env_file: .env
-    depends_on:
-      - db
-      - redis
-      - minio
+      minio:
+        condition: service_healthy
+    restart: unless-stopped
 
   beat:
     build: .
     image: backend-api
     container_name: market_beat
+    working_dir: /app
+    volumes:
+      - .:/app            # <— opcional en DEV
     command: celery -A app.workers.celery_app.celery_app beat -l info
     env_file: .env
     depends_on:
-      - worker
-      - db
-      - redis
-      - minio
-
+      worker:
+        condition: service_started
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    restart: unless-stopped
