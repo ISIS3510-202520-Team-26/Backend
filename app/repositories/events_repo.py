@@ -100,7 +100,7 @@ class EventRepository:
         stmt = sa.text("""
             SELECT occurred_at::date AS day, properties->>'button' AS button, COUNT(*) AS n
             FROM event
-            WHERE event_type = 'ui.click'
+            WHERE event_type = 'category.clicked'
               AND occurred_at >= :start AND occurred_at < :end
             GROUP BY day, button
             ORDER BY day, button
@@ -110,41 +110,55 @@ class EventRepository:
 
     async def bq_2_4_time_by_screen(self, *, start: datetime, end: datetime, max_idle_sec: int = 300):
         """
-        Calcula dwell time por pantalla usando eventos `screen.view`.
-        - Usa LEAD() por session_id para tomar la siguiente vista como fin del intervalo.
-        - Si no hay siguiente vista, capea a `max_idle_sec` (por defecto 5 min).
+        Calcula dwell time por pantalla usando TODOS los eventos.
+        - Infiere la pantalla del event_type (ej: 'category.clicked' -> 'home')
+        - Usa LEAD() por session_id para calcular tiempo entre eventos consecutivos
+        - Si no hay siguiente evento, capea a `max_idle_sec` (por defecto 5 min).
         Devuelve: [(screen, total_seconds, views, avg_seconds)]
         """
         stmt = sa.text("""
-            WITH v AS (
+            WITH events_with_screen AS (
               SELECT
                 session_id,
                 occurred_at,
-                COALESCE(NULLIF(properties->>'screen',''), '(unknown)') AS screen
+                CASE
+                  WHEN event_type LIKE 'auth.%' THEN 'login'
+                  WHEN event_type = 'listing.created' THEN 'create_listing'
+                  WHEN event_type = 'listing.viewed' THEN 'listing_detail'
+                  WHEN event_type = 'search.performed' THEN 'home'
+                  WHEN event_type = 'search.filter.used' THEN 'home'
+                  WHEN event_type = 'category.clicked' THEN 'home'
+                  WHEN event_type LIKE 'chat.%' THEN 'chat'
+                  WHEN event_type LIKE 'order.%' THEN 'orders'
+                  WHEN event_type LIKE 'escrow.%' THEN 'escrow'
+                  WHEN event_type LIKE 'payment.%' THEN 'payment'
+                  WHEN properties->>'screen' IS NOT NULL THEN properties->>'screen'
+                  ELSE 'home'
+                END AS screen
               FROM event
-              WHERE event_type = 'screen.view'
-                AND occurred_at >= :start AND occurred_at < :end
+              WHERE occurred_at >= :start AND occurred_at < :end
+                AND session_id IS NOT NULL
             ),
-            o AS (
+            with_next AS (
               SELECT
                 session_id,
                 screen,
                 occurred_at,
                 LEAD(occurred_at) OVER (PARTITION BY session_id ORDER BY occurred_at) AS next_time
-              FROM v
+              FROM events_with_screen
             ),
-            d AS (
+            durations AS (
               SELECT
                 screen,
                 LEAST(:max_idle, GREATEST(0, COALESCE(EXTRACT(EPOCH FROM (next_time - occurred_at)), :max_idle)))::bigint AS seconds
-              FROM o
+              FROM with_next
             )
             SELECT
               screen,
               SUM(seconds)::bigint AS total_seconds,
               COUNT(*)::bigint AS views,
               ROUND(AVG(seconds))::bigint AS avg_seconds
-            FROM d
+            FROM durations
             GROUP BY screen
             ORDER BY total_seconds DESC
         """)
